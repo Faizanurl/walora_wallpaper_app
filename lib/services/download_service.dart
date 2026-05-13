@@ -1,10 +1,8 @@
-import 'dart:developer' as developer;
 import 'dart:io';
-
 import 'package:dio/dio.dart';
+import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:share_plus/share_plus.dart';
 import 'firebase_service.dart';
 
@@ -34,12 +32,16 @@ class DownloadService {
     Function(double)? onProgress,
   }) async {
     try {
-      final hasPermission = await requestPermissions();
-      if (!hasPermission) return false;
+      // Check permission
+      final hasAccess = await Gal.hasAccess(toAlbum: true);
+      if (!hasAccess) {
+        await Gal.requestAccess(toAlbum: true);
+      }
 
       final tempDir = await getTemporaryDirectory();
       final filePath = '${tempDir.path}/$fileName.jpg';
 
+      // Download file
       await _dio.download(
         imageUrl,
         filePath,
@@ -50,21 +52,20 @@ class DownloadService {
         },
       );
 
-      final result = await ImageGallerySaver.saveFile(filePath);
-      final success = result['isSuccess'] ?? false;
+      // Save to gallery
+      await Gal.putImage(filePath, album: 'Wallpapers');
 
-      if (success) {
-        await FirebaseService().incrementDownloads(wallpaperId);
-        await FirebaseService().addToDownloadHistory(wallpaperId);
-      }
+      // Update Firebase
+      await FirebaseService().incrementDownloads(wallpaperId);
+      await FirebaseService().addToDownloadHistory(wallpaperId);
 
-      // Clean up temp file
+      // Clean temp file
       final file = File(filePath);
       if (await file.exists()) await file.delete();
 
-      return success;
+      return true;
     } catch (e) {
-      developer.log('Download error', error: e);
+      print('Download error: $e');
       return false;
     }
   }
@@ -81,13 +82,10 @@ class DownloadService {
 
       await Share.shareXFiles(
         [XFile(filePath)],
-        text:
-            'Check out this amazing wallpaper: $title\n\nDownloaded from Wallpaper App',
+        text: 'Check out this wallpaper: $title',
       );
     } catch (e) {
-      developer.log('Share error', error: e);
-      // Fallback to sharing URL
-      await Share.share('Check out this amazing wallpaper: $title\n$imageUrl');
+      await Share.share('$title\n$imageUrl');
     }
   }
 }
